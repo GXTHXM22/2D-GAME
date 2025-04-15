@@ -1,0 +1,141 @@
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_ttf.h>
+#include <SDL2/SDL_image.h>
+#include<SDL2/SDL_mixer.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#define SCREEN_WIDTH 500
+#define SCREEN_HEIGHT 800
+#define TRUCK_SPEED 1
+#define ROAD_SCROLL_SPEED 2
+#define ROAD_LEFT_BOUND 90
+#define ROAD_RIGHT_BOUND 450
+#define OBSTACLE_COUNT 3
+#define COLLECTIBLE_COUNT 3
+#define MIN_OBSTACLE_GAP 200
+#define LANE_WIDTH 250
+
+SDL_Texture *collectibleTexture;
+SDL_Rect collectibles[COLLECTIBLE_COUNT];
+int collectiblesCollected = 0;
+
+void renderText(SDL_Renderer *renderer, TTF_Font *font, const char *text, SDL_Color textColor, SDL_Color outlineColor, int x, int y) {
+    if (!font) return;
+    SDL_Surface *textSurface = TTF_RenderText_Solid(font, text, textColor);
+    SDL_Texture *textTexture = SDL_CreateTextureFromSurface(renderer, textSurface);
+    SDL_Rect textRect = {x, y, textSurface->w, textSurface->h};
+    SDL_RenderCopy(renderer, textTexture, NULL, &textRect);
+    SDL_FreeSurface(textSurface);
+    SDL_DestroyTexture(textTexture);
+}
+
+void resetGame(bool *gameStarted, bool *collision, SDL_Rect *truckRect, SDL_Rect obstacles[], SDL_Rect collectibles[]) {
+    *gameStarted = false;
+    *collision = false;
+    collectiblesCollected = 0;
+
+    truckRect->x = (SCREEN_WIDTH - truckRect->w) / 2;
+    truckRect->y = SCREEN_HEIGHT - truckRect->h - 20;
+
+    for (int i = 0; i < OBSTACLE_COUNT; i++) {
+        obstacles[i].x = ROAD_LEFT_BOUND + (rand() % 2) * (ROAD_RIGHT_BOUND - ROAD_LEFT_BOUND) / 2;
+        obstacles[i].y = -(i * MIN_OBSTACLE_GAP) - rand() % SCREEN_HEIGHT;
+        obstacles[i].w = 64;
+        obstacles[i].h = 64;
+    }
+
+    for (int i = 0; i < COLLECTIBLE_COUNT; i++) {
+        collectibles[i].x = ROAD_LEFT_BOUND + rand() % (ROAD_RIGHT_BOUND - ROAD_LEFT_BOUND - 50);
+        collectibles[i].y = -rand() % SCREEN_HEIGHT;
+        collectibles[i].w = 32;
+        collectibles[i].h = 32;
+    }
+}
+
+int main() {
+    SDL_Init(SDL_INIT_VIDEO);
+    TTF_Init();
+    IMG_Init(IMG_INIT_PNG | IMG_INIT_JPG);
+    
+    SDL_Window *window = SDL_CreateWindow("Game Window", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN);
+    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT,2,2048);
+    int volm = MIX_MAX_VOLUME/2;
+    Mix_VolumeMusic(volm);
+    Mix_Music *music = Mix_LoadMUS("music.wav");
+    Mix_PlayMusic(music,-1); 
+    SDL_Texture *bgTexture = IMG_LoadTexture(renderer, "road.png");
+    SDL_Texture *truckTexture = IMG_LoadTexture(renderer, "truck.png");
+    SDL_Texture *obstacleTexture = IMG_LoadTexture(renderer, "obstacle.png");
+    collectibleTexture = IMG_LoadTexture(renderer, "image.png");
+    
+    TTF_Font *font = TTF_OpenFont("arcade.ttf", 30);
+    SDL_Color textColor = {255, 255, 255};
+    SDL_Color outlineColor = {0, 0, 0};
+    
+    bool running = true, gameStarted = false, collision = false;
+    SDL_Event event;
+    SDL_Rect truckRect = {SCREEN_WIDTH / 2 - 32, SCREEN_HEIGHT - 70, 64, 80};
+    SDL_Rect obstacles[OBSTACLE_COUNT];
+    resetGame(&gameStarted, &collision, &truckRect, obstacles, collectibles);
+    
+    int roadY = 0;
+    
+    while (running) {
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) running = false;
+            if (event.type == SDL_KEYDOWN) {
+                if (!gameStarted && event.key.keysym.sym == SDLK_RETURN) gameStarted = true;
+                if (collision && event.key.keysym.sym == SDLK_RETURN) resetGame(&gameStarted, &collision, &truckRect, obstacles, collectibles);
+                if (event.key.keysym.sym == SDLK_LEFT && truckRect.x > ROAD_LEFT_BOUND) truckRect.x -= TRUCK_SPEED;
+                if (event.key.keysym.sym == SDLK_RIGHT && truckRect.x + truckRect.w < ROAD_RIGHT_BOUND) truckRect.x += TRUCK_SPEED;
+            }
+        }
+        
+        if (gameStarted && !collision) {
+            roadY += ROAD_SCROLL_SPEED;
+            if (roadY >= SCREEN_HEIGHT) roadY = 0;
+            
+            for (int i = 0; i < OBSTACLE_COUNT; i++) {
+                obstacles[i].y += ROAD_SCROLL_SPEED;
+                if (obstacles[i].y > SCREEN_HEIGHT) {
+                    obstacles[i].y = -MIN_OBSTACLE_GAP - rand() % SCREEN_HEIGHT;
+                    obstacles[i].x = ROAD_LEFT_BOUND + (rand() % 2) * (ROAD_RIGHT_BOUND - ROAD_LEFT_BOUND) / 2;
+                }
+                if (SDL_HasIntersection(&truckRect, &obstacles[i])) collision = true;
+            }
+            
+            for (int i = 0; i < COLLECTIBLE_COUNT; i++) {
+                collectibles[i].y += ROAD_SCROLL_SPEED;
+                if (collectibles[i].y > SCREEN_HEIGHT) {
+                    collectibles[i].y = -rand() % SCREEN_HEIGHT;
+                    collectibles[i].x = ROAD_LEFT_BOUND + rand() % (ROAD_RIGHT_BOUND - ROAD_LEFT_BOUND - 50);
+                }
+                if (SDL_HasIntersection(&truckRect, &collectibles[i])) {
+                    collectibles[i].y = -rand() % SCREEN_HEIGHT;
+                    collectiblesCollected++;
+                }
+            }
+        }
+        
+        SDL_RenderClear(renderer);
+        SDL_RenderCopy(renderer, bgTexture, NULL, &(SDL_Rect){0, roadY - SCREEN_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT});
+        SDL_RenderCopy(renderer, bgTexture, NULL, &(SDL_Rect){0, roadY, SCREEN_WIDTH, SCREEN_HEIGHT});
+        SDL_RenderCopy(renderer, truckTexture, NULL, &truckRect);
+        
+        for (int i = 0; i < OBSTACLE_COUNT; i++) SDL_RenderCopy(renderer, obstacleTexture, NULL, &obstacles[i]);
+        for (int i = 0; i < COLLECTIBLE_COUNT; i++) SDL_RenderCopy(renderer, collectibleTexture, NULL, &collectibles[i]);
+        if (!gameStarted) renderText(renderer, font, "Hit ENTER to Start", textColor,outlineColor, 100, 350);
+        if (collision) renderText(renderer, font, "Game Over! Hit ENTER to Restart", textColor,outlineColor, 100, 350);
+        
+        char scoreText[50];
+        sprintf(scoreText, "Bread Collected: %d", collectiblesCollected);
+        renderText(renderer, font, scoreText, textColor,outlineColor, 20, 20);
+        
+        SDL_RenderPresent(renderer);
+        SDL_RenderPresent(renderer);
+    }
+    return 0;
+}
